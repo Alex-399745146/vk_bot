@@ -65,7 +65,7 @@ class Update:
 
 @dataclass(slots=True)
 class ButtonEvent:
-    """Нажатие callback-кнопки (только Callback API)."""
+    """Нажатие callback-кнопки (только Callback API)"""
 
     peer_id: int
     from_id: int

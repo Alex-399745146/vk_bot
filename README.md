@@ -1,10 +1,165 @@
-# VK Bot (LongPoll + Callback API)
+# 🤖 VK Bot
 
-Чат-бот ВКонтакте на Python 3.11+. Одна бизнес-логика, два транспорта:
-LongPoll (для локального запуска) и Callback API (для продакшена).
-Без тяжёлых фреймворков — только `httpx`, `aiohttp` и `python-dotenv`.
+**Чат-бот ВКонтакте на Python. Одна бизнес-логика — два транспорта: LongPoll и Callback API.**
 
-## Структура
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![VK API](https://img.shields.io/badge/VK%20API-5.199-4C75A3?logo=vk&logoColor=white)](https://dev.vk.com/)
+[![LongPoll + Callback](https://img.shields.io/badge/transport-LongPoll%20%2B%20Callback-2ea44f)](#-транспорты)
+[![Tests](https://img.shields.io/badge/tests-18%20passed-brightgreen)](#-тесты)
+[![No heavy frameworks](https://img.shields.io/badge/frameworks-none-lightgrey)](#-стек)
+
+Лёгкий каркас бота без «тяжёлых» фреймворков: только `httpx`, `aiohttp` и
+`python-dotenv`. Транспорт приносит событие, диспетчер решает, кто его
+обработает, хендлер отвечает — и ничего не знает о способе доставки.
+
+---
+
+## ✨ Возможности
+
+- 🔁 **Два транспорта** — LongPoll для локального запуска, Callback API для продакшена.
+- 🧠 **Единый диспетчер** — текст, payload-команды кнопок и произвольные предикаты.
+- ⌨️ **Клавиатуры** — reply и inline, с удобными конструкторами.
+- 🛡 **Надёжность** — авто-переподключение LongPoll (`failed: 1/2/3`), дедупликация
+  событий по `event_id`, проверка `secret` у Callback API.
+- 🔐 **Безопасность** — токен только в `.env`, в репозиторий не попадает.
+- ✅ **Тесты без токена и сети** — 18 проверок логики и HTTP-сервера.
+
+---
+
+## 🏗 Архитектура
+
+```mermaid
+flowchart LR
+    VK[(ВКонтакте)]
+
+    subgraph transports [bot/transports]
+        LP[longpoll.py<br/>a_check]
+        CB[callback.py<br/>aiohttp]
+    end
+
+    M[models.Update<br/>единый формат]
+    D[dispatcher.py<br/>маршруты]
+    H[handlers.py<br/>бизнес-логика]
+    API[vk_api.py<br/>VKAPI]
+
+    VK -- "LongPoll" --> LP
+    VK -- "Callback API" --> CB
+    LP --> M --> D
+    CB --> M
+    D --> H
+    H --> API
+    API -- "messages.send" --> VK
+```
+
+Транспорт превращает событие ВК в `Update` и вызывает `dispatcher.dispatch(...)`.
+Дальше всё одинаково — поэтому переезд с LongPoll на Callback не требует
+переписывать хендлеры.
+
+---
+
+## 🚀 Быстрый старт
+
+```bash
+git clone https://github.com/<ваш-логин>/vk-bot.git
+cd vk-bot
+
+python -m venv .venv
+source .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env               # заполнить VK_TOKEN и VK_GROUP_ID
+python -m bot                      # по умолчанию LongPoll
+```
+
+Бот запустится и начнёт слушать сообщения сообщества.
+
+---
+
+## ⚙️ Настройки `.env`
+
+| Переменная | Обязательна | По умолчанию | Назначение |
+| --- | :---: | --- | --- |
+| `VK_TOKEN` | ✅ | — | Ключ доступа сообщества |
+| `VK_GROUP_ID` | ✅ | — | Числовой id сообщества (без минуса) |
+| `BOT_TRANSPORT` | — | `longpoll` | `longpoll` или `callback` |
+| `VK_API_VERSION` | — | `5.199` | Версия VK API |
+| `VK_CONFIRMATION_CODE` | для Callback | — | «Строка, которую должен вернуть сервер» |
+| `VK_SECRET_KEY` | для Callback | — | Секретный ключ из настроек сервера |
+| `CALLBACK_HOST` | — | `0.0.0.0` | Адрес HTTP-сервера |
+| `CALLBACK_PORT` | — | `8080` | Порт HTTP-сервера |
+| `CALLBACK_PATH` | — | `/vk/callback` | Путь для событий |
+| `LOG_LEVEL` | — | `INFO` | `DEBUG`, `INFO`, `WARNING`… |
+| `LOG_HTTP` | — | `0` | `1` — показывать HTTP-запросы |
+
+### Где взять токен и id
+
+1. Создайте сообщество → **Управление → Работа с API**.
+2. **Ключи доступа** → создайте ключ с правами «Управление сообществом» и
+   «Сообщения сообщества». Это `VK_TOKEN`.
+3. **ID сообщества** — числовой id без минуса (`VK_GROUP_ID`).
+4. **Сообщения → Сообщения сообществ** — включить.
+5. **Сообщения → Настройки для бота → Возможности ботов** — включить
+   (без этого клавиатуры не отображаются!).
+6. **Работа с API → Long Poll API** — включить, отметить `message_new`.
+7. Для Callback API дополнительно отметить `message_event`.
+
+---
+
+## 🔌 Транспорты
+
+### LongPoll — локальный запуск
+
+```bash
+python -m bot --transport longpoll
+```
+
+Дополнительная настройка не нужна: бот сам получает `server / key / ts`
+и переподключается при `failed: 1/2/3`.
+
+### Callback API — продакшен
+
+Нужен публичный HTTPS-адрес. Локально удобно через туннель:
+
+```bash
+ngrok http 8080
+# или: cloudflared tunnel --url http://localhost:8080
+```
+
+В сообществе: **Работа с API → Callback API → Настройки сервера**:
+
+- URL — `https://<домен>/vk/callback`
+- Строка подтверждения → `VK_CONFIRMATION_CODE` в `.env`
+- Секретный ключ → `VK_SECRET_KEY` в `.env`
+- Типы событий — `message_new`, `message_event`
+
+```bash
+python -m bot --transport callback
+```
+
+Сервер отвечает ВК `ok` сразу, обработка идёт в фоновой задаче; повторные
+доставки отсекаются по `event_id`. Проверка живости — `GET /health`.
+
+---
+
+## ⌨️ Кнопки: два типа
+
+| Тип | Где работает | Как приходит |
+| --- | --- | --- |
+| `text` — reply-клавиатура | LongPoll и Callback | `message_new`, payload в `message.payload` |
+| `callback` — inline | только Callback API | событие `message_event` |
+
+`build_dispatcher(inline_buttons=...)` переключает вид меню: в LongPoll `/help`
+отдаёт reply-клавиатуру, в Callback API — inline. Нажатие `message_event`
+проходит через тот же диспетчер, поэтому хендлеры общие.
+
+> 💡 Reply-клавиатура живёт на **последнем** сообщении бота: ВК скрывает её,
+> как только приходит ответ без `keyboard`. Вернуть — `/start` или `/help`.
+> Чтобы клавиатура висела всегда, прикладывайте её явно:
+> `await ctx.reply("...", keyboard=main_keyboard())`.
+
+---
+
+## 📁 Структура
 
 ```
 bot/
@@ -16,106 +171,16 @@ bot/
   keyboards.py         # reply/inline клавиатуры
   vk_api.py            # единственный клиент API ВК
   transports/
-    longpoll.py        # Bots LongPoll: groups.getLongPollServer + a_check
+    longpoll.py        # groups.getLongPollServer + a_check
     callback.py        # aiohttp-сервер Callback API
 tests/
-  test_dispatcher.py   # тесты без токена и сети
+  test_dispatcher.py   # маршрутизация без сети
+  test_callback.py     # HTTP-сервер на aiohttp TestClient
 ```
 
-Ключевая идея: транспорт только превращает событие ВК в `Update` и зовёт
-`dispatcher.dispatch(...)`. Хендлеры ничего не знают про LongPoll/Callback.
+---
 
-## Быстрый старт
-
-```bash
-cd projects/vk-bot
-python -m venv .venv
-source .venv/Scripts/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env               # заполнить VK_TOKEN и VK_GROUP_ID
-python -m bot                      # по умолчанию LongPoll
-```
-
-Тесты (без токена, без сети):
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest -q
-```
-
-## Где взять настройки
-
-1. Создайте сообщество ВК → **Управление** → **Работа с API**.
-2. **Ключи доступа** → создайте ключ с правами «Управление сообществом» и
-   «Сообщения сообщества». Это `VK_TOKEN`.
-3. **ID сообщества** — числовой id (`VK_GROUP_ID`, без минуса).
-4. **Сообщения сообщества** → включите сообщения.
-5. LongPoll: **Работа с API → Long Poll API** → включите и отметьте событие
-   `message_new`. Для кнопок добавьте `message_event` (только Callback API).
-
-## LongPoll
-
-```bash
-python -m bot --transport longpoll
-```
-
-Ничего дополнительно настраивать не нужно: бот сам получает `server/key/ts`
-и переподключается при `failed: 1/2/3`.
-
-## Callback API
-
-Нужен публичный HTTPS-адрес. Локально удобно через туннель:
-
-```bash
-ngrok http 8080
-# или: cloudflared tunnel --url http://localhost:8080
-```
-
-В сообществе: **Работа с API → Callback API → Настройки сервера**:
-
-- URL: `https://<ваш-домен>/vk/callback`
-- Строка подтверждения — скопируйте её в `.env` как `VK_CONFIRMATION_CODE`
-  (сервер ответит на событие `confirmation`)
-- Секретный ключ — в `.env` как `VK_SECRET_KEY` (сравнивается с полем `secret`)
-- Типы событий: `message_new`, `message_event`
-
-```bash
-python -m bot --transport callback
-```
-
-Сервер отвечает ВК `ok` сразу, а обработку делает в фоновой задаче. Повторные
-доставки отсекаются по `event_id`. Проверка живости: `GET /health`.
-
-## Логи
-
-По умолчанию терминал тихий: видны только запуск и ошибки. Технические
-строки `httpx` с кодами 200 скрыты, входящие сообщения не логируются.
-
-Для отладки: `LOG_HTTP=1` в `.env` покажет HTTP-запросы, `LOG_LEVEL=DEBUG`
-добавит выбранные обработчики.
-
-## Кнопки: два типа
-
-| Тип | Где работает | Как приходит |
-| --- | --- | --- |
-| `text` (reply-клавиатура, `keyboard=`) | LongPoll и Callback | `message_new`, payload в `message.payload` |
-| `callback` (inline, `inline=True`) | только Callback API | событие `message_event` |
-
-Поэтому `build_dispatcher(inline_buttons=...)` переключает вид меню:
-в LongPoll `/help` отдаёт reply-клавиатуру, в Callback API — inline с
-`type: "callback"`. Нажатие `message_event` прогоняется через тот же
-диспетчер, поэтому хендлеры для кнопок и текста общие.
-
-В LongPoll reply-клавиатура приходит вместе с ответом на `/start` и `/help`;
-следующие сообщения бота уходят без неё, и ВК скрывает кнопки. Если нужно,
-чтобы клавиатура висела постоянно, прикладывайте её в хендлере явно:
-`await ctx.reply("...", keyboard=main_keyboard())`.
-
-Если хотите inline-кнопки и в LongPoll — используйте `type: "text"` внутри
-inline-клавиатуры: они приходят обычным сообщением, но payload ВК для них
-не гарантирует, поэтому надёжнее reply-клавиатура.
-
-## Как добавить команду
+## 🧩 Свои команды
 
 ```python
 @dp.message(text=["/ping", "пинг"])
@@ -135,32 +200,59 @@ async def on_click(ctx: Context) -> None:
 reply_markup = keyboard([[button("Нажми", payload={"cmd": "click"}, color="primary")]])
 ```
 
-Хендлер получает `Context`: `ctx.update` (текст, `peer_id`, `from_id`,
-`payload`) и `ctx.reply(text, keyboard=..., attachment=..., reply_to=True)`.
-Если ни один маршрут не совпал, вызывается `@dp.fallback`.
+Хендлер получает `Context`:
 
-## Важные детали ВК
+- `ctx.update` — `text`, `peer_id`, `from_id`, `payload`, `command`;
+- `ctx.reply(text, keyboard=..., attachment=..., reply_to=True)`.
 
-- `random_id` обязателен и уникален, иначе сообщения схлопываются — он уже
-  генерируется в `VKAPI.send_message`.
-- Отвечайте на `peer_id`, а не на `from_id`: в беседах это разные значения.
-- Лимиты: ~20 сообщений/сек на сообщество, ~20 запросов/сек к API.
-- LongPoll держит соединение до 25 секунд — это нормально, не таймаутьте его.
-- Токен — только в `.env`, файл в `.gitignore`.
+Если ни один маршрут не совпал — срабатывает `@dp.fallback`.
 
-## Агент OpenCode
+---
 
-В `~/.config/opencode/agents/vk-bot-dev.md` лежит агент `vk-bot-dev`:
-он знает эту архитектуру и правила VK API (LongPoll `failed`-коды,
-`random_id`, лимиты, Callback-подтверждение, дедупликация `event_id`).
+## 🧪 Тесты
 
-Использование: попросите основного агента «используй vk-bot-dev, чтобы …»
-или переключитесь на него как на основной (`/agents` в TUI).
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
 
-## Деплой (кратко)
+```
+..................                                                       [100%]
+18 passed
+```
 
-Callback API за reverse-proxy (nginx/caddy) с HTTPS, процесс под systemd или
-в Docker. Пример unit-файла:
+Тесты не требуют токена и не ходят в сеть: поднимают Callback-сервер через
+`aiohttp.test_utils` и подменяют VK API заглушкой.
+
+---
+
+## 🧰 Стек
+
+- **Язык:** Python 3.11+ (проверено на 3.13), `asyncio`
+- **Сеть:** `httpx` — клиент VK API, `aiohttp` — сервер Callback API
+- **ВКонтакте:** VK API 5.199, Bots LongPoll API, Callback API, клавиатуры
+- **Тесты:** `pytest`, `pytest-asyncio`
+- **Инфраструктура:** `python-dotenv`, Git
+
+---
+
+## ❗ Типичные проблемы
+
+| Симптом | Причина и решение |
+| --- | --- |
+| Бот отвечает, но кнопок нет | Не включены **Возможности ботов** (Сообщения → Настройки для бота). Старые сообщения не обновятся — отправьте `/start` заново |
+| Кнопки пропали после ответа | Норма: reply-клавиатура живёт на последнем сообщении. Вернуть — `/start` |
+| Inline-кнопки не нажимаются | В LongPoll `message_event` не приходит. Нужен Callback API |
+| `911 Keyboard format is invalid` | Некорректный JSON клавиатуры; проверьте, что это строка, а не dict |
+| `15` / `27` при `getLongPollServer` | У токена нет прав «Управление сообществом» и «Сообщения сообщества» |
+| Бот молчит на кнопку «Начать» | Приходит payload `{"command": "start"}` без текста — бот это понимает начиная с текущей версии |
+| В логе одни 200-е | Это `httpx`; по умолчанию отключено, включается `LOG_HTTP=1` |
+
+---
+
+## 📦 Деплой
+
+Callback API за reverse-proxy (nginx/caddy) с HTTPS, процесс — под systemd:
 
 ```ini
 [Unit]
@@ -177,3 +269,21 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 ```
+
+---
+
+## 🗺 План
+
+- [x] LongPoll + Callback API на общей логике
+- [x] Клавиатуры и payload-команды
+- [x] Тесты без сети
+- [ ] GitHub Actions: тесты на каждый push
+- [ ] SQLite для состояния между перезапусками
+- [ ] Docker + docker-compose
+- [ ] Сценарии вместо эха: заявки, каталог, запись
+
+---
+
+<p align="center">
+  <sub>Сделано на Python · VK API 5.199 · без vkbottle</sub>
+</p>
